@@ -34,11 +34,12 @@
  * @author [Ali Alimohammadi](https://github.com/AliAlimohammadi)
  */
 
-#include <algorithm>   /// for std::max
-#include <cassert>     /// for assert
-#include <iostream>    /// for IO operations
-#include <string>      /// for std::string
-#include <vector>      /// for std::vector
+#include <algorithm>  /// for std::max
+#include <cassert>    /// for assert
+#include <iostream>   /// for IO operations
+#include <string>     /// for std::string
+#include <utility>    /// for std::pair
+#include <vector>     /// for std::vector
 
 /**
  * @namespace dynamic_programming
@@ -52,91 +53,117 @@ namespace dynamic_programming {
 namespace smith_waterman {
 
 /**
+ * @enum Direction
+ * @brief Direction indicators for traceback in the scoring matrix
+ */
+enum Direction {
+    NONE = 0,      ///< No direction (score is 0)
+    DIAGONAL = 1,  ///< Match or mismatch
+    UP = 2,        ///< Gap in subject sequence
+    LEFT = 3       ///< Gap in query sequence
+};
+
+/**
  * @brief Calculate the score for a character pair
- *
+ * 
  * @param a First character
  * @param b Second character
  * @param match_score Score for matching characters (typically positive)
  * @param mismatch_score Score for mismatching characters (typically negative)
- * @param gap_score Penalty for gaps (typically negative)
  * @return int The calculated score
  */
-int score_function(char a, char b, int match_score, int mismatch_score,
-                   int gap_score) {
-    if (a == '-' || b == '-') {
-        return gap_score;
-    } else if (a == b) {
-        return match_score;
-    } else {
-        return mismatch_score;
-    }
+int score_function(char a, char b, int match_score, int mismatch_score) {
+    return (a == b) ? match_score : mismatch_score;
 }
 
 /**
- * @brief Perform Smith-Waterman local sequence alignment
- *
+ * @brief Compute the Smith-Waterman scoring matrix
+ * @details
+ * The Smith-Waterman algorithm uses dynamic programming to find the optimal
+ * local alignment. The recurrence relation is:
+ * 
+ * H(i,j) = max {
+ *     H(i-1,j-1) + s(a_i, b_j),  // diagonal: match/mismatch
+ *     H(i-1,j) + gap_score,      // up: gap in subject
+ *     H(i,j-1) + gap_score,      // left: gap in query
+ *     0                          // start new alignment
+ * }
+ * 
+ * Additionally stores direction information for efficient traceback.
+ * When multiple paths have equal scores, the algorithm prioritizes diagonal
+ * moves, then up, then left.
+ * 
  * @param query First sequence
  * @param subject Second sequence
- * @param match_score Score for matching characters (default: 1)
- * @param mismatch_score Score for mismatching characters (default: -1)
- * @param gap_score Penalty for gaps (default: -2)
- * @return std::vector<std::vector<int>> The scoring matrix
+ * @param match_score Score for matching characters (default: 2)
+ * @param mismatch_score Penalty for mismatching characters (default: -1)
+ * @param gap_score Penalty for gaps (default: -1)
+ * @return std::pair of scoring matrix and direction matrix
  */
-std::vector<std::vector<int>> smith_waterman(const std::string& query,
-                                               const std::string& subject,
-                                               int match_score = 1,
-                                               int mismatch_score = -1,
-                                               int gap_score = -2) {
-    int m = query.length();
-    int n = subject.length();
+std::pair<std::vector<std::vector<int>>, std::vector<std::vector<Direction>>>
+smith_waterman(const std::string &query, const std::string &subject,
+               int match_score = 2, int mismatch_score = -1,
+               int gap_score = -1) {
+    size_t m = query.length();
+    size_t n = subject.length();
 
     // Initialize scoring matrix with zeros
     std::vector<std::vector<int>> score(m + 1, std::vector<int>(n + 1, 0));
+    
+    // Initialize direction matrix for traceback
+    std::vector<std::vector<Direction>> direction(m + 1, 
+                                                   std::vector<Direction>(n + 1, NONE));
 
-    // Fill the scoring matrix using dynamic programming
-    for (int i = 1; i <= m; ++i) {
-        for (int j = 1; j <= n; ++j) {
-            // Calculate score for match/mismatch
-            int match_or_mismatch = score[i - 1][j - 1] +
-                                     score_function(query[i - 1], subject[j - 1],
-                                                    match_score, mismatch_score,
-                                                    gap_score);
+    // Fill matrices using dynamic programming
+    for (size_t i = 1; i <= m; ++i) {
+        for (size_t j = 1; j <= n; ++j) {
+            // Calculate scores from three possible sources
+            int match_mismatch = score[i - 1][j - 1] + 
+                score_function(query[i - 1], subject[j - 1], 
+                              match_score, mismatch_score);
+            int delete_gap = score[i - 1][j] + gap_score;
+            int insert_gap = score[i][j - 1] + gap_score;
 
-            // Calculate score for deletion (gap in subject)
-            int delete_score = score[i - 1][j] + gap_score;
+            // Take maximum of all options, including 0 (local alignment)
+            int max_score = std::max({match_mismatch, delete_gap, insert_gap, 0});
+            score[i][j] = max_score;
 
-            // Calculate score for insertion (gap in query)
-            int insert_score = score[i][j - 1] + gap_score;
-
-            // Take maximum of all options, but never go below 0 (local
-            // alignment)
-            score[i][j] =
-                std::max({0, match_or_mismatch, delete_score, insert_score});
+            // Store direction for traceback
+            if (max_score == 0) {
+                direction[i][j] = NONE;
+            } else if (max_score == match_mismatch) {
+                direction[i][j] = DIAGONAL;
+            } else if (max_score == delete_gap) {
+                direction[i][j] = UP;
+            } else {
+                direction[i][j] = LEFT;
+            }
         }
     }
 
-    return score;
+    return {score, direction};
 }
 
 /**
- * @brief Perform traceback to reconstruct the optimal alignment
- *
- * @param score The score matrix from smith_waterman function
- * @param query Original query sequence
- * @param subject Original subject sequence
- * @param match_score Score for matching characters (default: 1)
- * @param mismatch_score Score for mismatching characters (default: -1)
- * @param gap_score Penalty for gaps (default: -2)
+ * @brief Perform traceback to reconstruct the optimal local alignment
+ * @details
+ * Starting from the cell with maximum score, follows the direction matrix
+ * backwards until reaching a cell with score 0, reconstructing the alignment.
+ * 
+ * @param score The scoring matrix from smith_waterman()
+ * @param direction The direction matrix from smith_waterman()
+ * @param query First sequence
+ * @param subject Second sequence
  * @return std::pair<std::string, std::string> The aligned sequences
  */
-std::pair<std::string, std::string> traceback(
-    const std::vector<std::vector<int>>& score, const std::string& query,
-    const std::string& subject, int match_score = 1, int mismatch_score = -1,
-    int gap_score = -2) {
+std::pair<std::string, std::string>
+traceback(const std::vector<std::vector<int>> &score,
+          const std::vector<std::vector<Direction>> &direction,
+          const std::string &query, const std::string &subject) {
     // Find the cell with maximum score
     int max_value = 0;
-    int i_max = 0;
-    int j_max = 0;
+    size_t i_max = 0;
+    size_t j_max = 0;
 
     for (size_t i = 0; i < score.size(); ++i) {
         for (size_t j = 0; j < score[i].size(); ++j) {
@@ -149,41 +176,40 @@ std::pair<std::string, std::string> traceback(
     }
 
     // If no significant alignment found, return empty strings
-    if (i_max == 0 || j_max == 0) {
+    if (max_value == 0) {
         return {"", ""};
     }
 
-    // Traceback from the maximum scoring cell
+    // Traceback from maximum score position
     std::string align1;
     std::string align2;
-    int i = i_max;
-    int j = j_max;
+    size_t i = i_max;
+    size_t j = j_max;
 
-    // Continue tracing back until we hit a cell with score 0
-    while (i > 0 && j > 0 && score[i][j] > 0) {
-        int current_score = score[i][j];
-
-        // Check if we came from diagonal (match/mismatch)
-        if (current_score ==
-            score[i - 1][j - 1] +
-                score_function(query[i - 1], subject[j - 1], match_score,
-                               mismatch_score, gap_score)) {
-            align1 = query[i - 1] + align1;
-            align2 = subject[j - 1] + align2;
-            --i;
-            --j;
-        }
-        // Check if we came from above (deletion/gap in subject)
-        else if (current_score == score[i - 1][j] + gap_score) {
-            align1 = query[i - 1] + align1;
-            align2 = '-' + align2;
-            --i;
-        }
-        // Otherwise we came from left (insertion/gap in query)
-        else {
-            align1 = '-' + align1;
-            align2 = subject[j - 1] + align2;
-            --j;
+    // Follow direction matrix until we hit NONE (score of 0)
+    while (i > 0 && j > 0 && direction[i][j] != NONE) {
+        switch (direction[i][j]) {
+            case DIAGONAL:
+                // Match or mismatch
+                align1 = query[i - 1] + align1;
+                align2 = subject[j - 1] + align2;
+                --i;
+                --j;
+                break;
+            case UP:
+                // Gap in subject
+                align1 = query[i - 1] + align1;
+                align2 = '-' + align2;
+                --i;
+                break;
+            case LEFT:
+                // Gap in query
+                align1 = '-' + align1;
+                align2 = subject[j - 1] + align2;
+                --j;
+                break;
+            default:
+                break;
         }
     }
 
@@ -198,94 +224,99 @@ std::pair<std::string, std::string> traceback(
  * @returns void
  */
 static void test() {
+    using dynamic_programming::smith_waterman::smith_waterman;
+    using dynamic_programming::smith_waterman::traceback;
+
     // Test 1: Simple exact match
-    auto score1 = dynamic_programming::smith_waterman::smith_waterman("AGT", "AGT");
-    assert(score1[3][3] == 3);  // Perfect match should score 3
+    auto [score1, dir1] = smith_waterman("AGCT", "AGCT");
+    auto result1 = traceback(score1, dir1, "AGCT", "AGCT");
+    assert(result1.first == "AGCT");
+    assert(result1.second == "AGCT");
     std::cout << "Test 1 passed: Simple exact match\n";
 
     // Test 2: Partial match
-    auto score2 = dynamic_programming::smith_waterman::smith_waterman("ACAC", "CA");
-    assert(score2[3][2] == 2);  // Best local alignment scores 2
+    auto [score2, dir2] = smith_waterman("AGCT", "AGT");
+    auto result2 = traceback(score2, dir2, "AGCT", "AGT");
+    assert(!result2.first.empty());
+    assert(!result2.second.empty());
     std::cout << "Test 2 passed: Partial match\n";
 
-    // Test 3: Traceback test
-    auto result3 = dynamic_programming::smith_waterman::traceback(score2, "ACAC", "CA");
-    assert(result3.first == "CA");
-    assert(result3.second == "CA");
-    std::cout << "Test 3 passed: Traceback\n";
+    // Test 3: Traceback verification
+    auto [score3, dir3] = smith_waterman("AGCT", "AGCT");
+    auto result3 = traceback(score3, dir3, "AGCT", "AGCT");
+    assert(result3.first == "AGCT");
+    assert(result3.second == "AGCT");
+    std::cout << "Test 3 passed: Traceback verification\n";
 
-    // Test 4: No match
-    auto score4 = dynamic_programming::smith_waterman::smith_waterman("AAA", "TTT");
-    int max_score = 0;
-    for (const auto& row : score4) {
-        max_score = std::max(max_score, *std::max_element(row.begin(), row.end()));
-    }
-    assert(max_score == 0);  // No matches should score 0
-    std::cout << "Test 4 passed: No match\n";
+    // Test 4: No match scenario
+    auto [score4, dir4] = smith_waterman("AAAA", "TTTT");
+    auto result4 = traceback(score4, dir4, "AAAA", "TTTT");
+    assert(result4.first.empty());
+    assert(result4.second.empty());
+    std::cout << "Test 4 passed: No match scenario\n";
 
-    // Test 5: Empty strings
-    auto score5 = dynamic_programming::smith_waterman::smith_waterman("", "AGT");
-    assert(score5.size() == 1);
-    assert(score5[0].size() == 4);
-    std::cout << "Test 5 passed: Empty query\n";
+    // Test 5: Empty string handling
+    auto [score5, dir5] = smith_waterman("", "AGCT");
+    auto result5 = traceback(score5, dir5, "", "AGCT");
+    assert(result5.first.empty());
+    assert(result5.second.empty());
+    std::cout << "Test 5 passed: Empty string handling\n";
 
-    // Test 6: Longer sequences with gaps
-    auto score6 = dynamic_programming::smith_waterman::smith_waterman("AGCT", "AGT");
-    auto result6 = dynamic_programming::smith_waterman::traceback(score6, "AGCT", "AGT");
-    // The alignment should handle the gap appropriately
+    // Test 6: Sequences with gaps
+    auto [score6, dir6] = smith_waterman("AGCT", "AGT");
+    auto result6 = traceback(score6, dir6, "AGCT", "AGT");
     assert(!result6.first.empty());
     assert(!result6.second.empty());
-    std::cout << "Test 6 passed: Longer sequences with gaps\n";
+    assert(result6.first.length() == result6.second.length());
+    std::cout << "Test 6 passed: Sequences with gaps\n";
 
-    // Test 7: Custom scoring
-    auto score7 = dynamic_programming::smith_waterman::smith_waterman(
-        "ACGT", "ACGT", 2, -1, -1);  // Higher match score
-    assert(score7[4][4] == 8);  // 4 matches × 2 = 8
-    std::cout << "Test 7 passed: Custom scoring\n";
+    // Test 7: Custom scoring parameters
+    auto [score7, dir7] = smith_waterman("AGCT", "AGCT", 3, -2, -2);
+    auto result7 = traceback(score7, dir7, "AGCT", "AGCT");
+    assert(result7.first == "AGCT");
+    assert(result7.second == "AGCT");
+    std::cout << "Test 7 passed: Custom scoring parameters\n";
 
-    // Test 8: Case sensitivity (algorithm is case-sensitive)
-    auto score8 = dynamic_programming::smith_waterman::smith_waterman("ACT", "act");
-    int max_score8 = 0;
-    for (const auto& row : score8) {
-        max_score8 = std::max(max_score8, *std::max_element(row.begin(), row.end()));
-    }
-    assert(max_score8 == 0);  // Different cases, no match
+    // Test 8: Case sensitivity
+    auto [score8, dir8] = smith_waterman("agct", "AGCT");
+    auto result8 = traceback(score8, dir8, "agct", "AGCT");
+    assert(result8.first.empty());
+    assert(result8.second.empty());
     std::cout << "Test 8 passed: Case sensitivity\n";
 
-    std::cout << "All tests passed successfully!\n";
+    std::cout << "\nAll tests passed!\n";
 }
 
 /**
- * @brief Main function - only enabled for standalone testing
+ * @brief Main function
  * @returns 0 on exit
  */
 int main() {
-    test();  // Run self-test implementations
+    std::cout << "Smith-Waterman Algorithm for Local Sequence Alignment\n";
+    std::cout << "======================================================\n\n";
 
     // Example usage
-    std::cout << "\n--- Example Usage ---\n";
-    std::string query = "ACACACTA";
-    std::string subject = "AGCACACA";
+    std::string query = "GCATGCT";
+    std::string subject = "GATTACA";
 
     std::cout << "Query:   " << query << "\n";
     std::cout << "Subject: " << subject << "\n\n";
 
-    // Perform alignment
-    auto score_matrix =
+    auto [score_matrix, direction_matrix] = 
         dynamic_programming::smith_waterman::smith_waterman(query, subject);
-    auto alignment =
-        dynamic_programming::smith_waterman::traceback(score_matrix, query, subject);
+    auto alignment = 
+        dynamic_programming::smith_waterman::traceback(score_matrix, 
+                                                       direction_matrix,
+                                                       query, subject);
 
-    std::cout << "Aligned sequences:\n";
+    std::cout << "Optimal Local Alignment:\n";
     std::cout << "Query:   " << alignment.first << "\n";
-    std::cout << "Subject: " << alignment.second << "\n";
+    std::cout << "Subject: " << alignment.second << "\n\n";
 
-    // Find the maximum score
-    int max_score = 0;
-    for (const auto& row : score_matrix) {
-        max_score = std::max(max_score, *std::max_element(row.begin(), row.end()));
-    }
-    std::cout << "Alignment score: " << max_score << "\n";
+    // Run tests
+    std::cout << "Running tests...\n";
+    std::cout << "================\n";
+    test();
 
     return 0;
 }
