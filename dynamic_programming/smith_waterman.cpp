@@ -149,12 +149,15 @@ smith_waterman(const std::string &query, const std::string &subject,
  * @details
  * Starting from the cell with maximum score, follows the direction matrix
  * backwards until reaching a cell with score 0, reconstructing the alignment.
+ * Gaps introduced during the alignment are represented by the dash ('-') character
+ * in the returned aligned sequences.
  * 
  * @param score The scoring matrix from smith_waterman()
  * @param direction The direction matrix from smith_waterman()
  * @param query First sequence
  * @param subject Second sequence
- * @return std::pair<std::string, std::string> The aligned sequences
+ * @return std::pair<std::string, std::string> The aligned sequences, where gaps
+ * are represented by '-' characters
  */
 std::pair<std::string, std::string>
 traceback(const std::vector<std::vector<int>> &score,
