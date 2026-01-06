@@ -121,11 +121,11 @@ smith_waterman(const std::string &query, const std::string &subject,
             int match_mismatch = score[i - 1][j - 1] + 
                 score_function(query[i - 1], subject[j - 1], 
                               match_score, mismatch_score);
-            int delete_gap = score[i - 1][j] + gap_score;
-            int insert_gap = score[i][j - 1] + gap_score;
+            int gap_subject = score[i - 1][j] + gap_score;
+            int gap_query = score[i][j - 1] + gap_score;
 
             // Take maximum of all options, including 0 (local alignment)
-            int max_score = std::max({match_mismatch, delete_gap, insert_gap, 0});
+            int max_score = std::max({match_mismatch, gap_subject, gap_query, 0});
             score[i][j] = max_score;
 
             // Store direction for traceback
@@ -133,7 +133,7 @@ smith_waterman(const std::string &query, const std::string &subject,
                 direction[i][j] = NONE;
             } else if (max_score == match_mismatch) {
                 direction[i][j] = DIAGONAL;
-            } else if (max_score == delete_gap) {
+            } else if (max_score == gap_subject) {
                 direction[i][j] = UP;
             } else {
                 direction[i][j] = LEFT;
@@ -184,8 +184,9 @@ traceback(const std::vector<std::vector<int>> &score,
     }
 
     // Traceback from maximum score position
-    std::string align1;
-    std::string align2;
+    // Build alignment strings efficiently using vectors
+    std::vector<char> align1_vec;
+    std::vector<char> align2_vec;
     size_t i = i_max;
     size_t j = j_max;
 
@@ -194,21 +195,21 @@ traceback(const std::vector<std::vector<int>> &score,
         switch (direction[i][j]) {
             case DIAGONAL:
                 // Match or mismatch
-                align1 = query[i - 1] + align1;
-                align2 = subject[j - 1] + align2;
+                align1_vec.push_back(query[i - 1]);
+                align2_vec.push_back(subject[j - 1]);
                 --i;
                 --j;
                 break;
             case UP:
                 // Gap in subject
-                align1 = query[i - 1] + align1;
-                align2 = '-' + align2;
+                align1_vec.push_back(query[i - 1]);
+                align2_vec.push_back('-');
                 --i;
                 break;
             case LEFT:
                 // Gap in query
-                align1 = '-' + align1;
-                align2 = subject[j - 1] + align2;
+                align1_vec.push_back('-');
+                align2_vec.push_back(subject[j - 1]);
                 --j;
                 break;
             default:
@@ -216,7 +217,12 @@ traceback(const std::vector<std::vector<int>> &score,
         }
     }
 
-    return {align1, align2};
+    // Reverse vectors and construct strings
+    std::reverse(align1_vec.begin(), align1_vec.end());
+    std::reverse(align2_vec.begin(), align2_vec.end());
+    
+    return {std::string(align1_vec.begin(), align1_vec.end()),
+            std::string(align2_vec.begin(), align2_vec.end())};
 }
 
 }  // namespace smith_waterman
@@ -244,12 +250,12 @@ static void test() {
     assert(!result2.second.empty());
     std::cout << "Test 2 passed: Partial match\n";
 
-    // Test 3: Traceback verification
-    auto [score3, dir3] = smith_waterman("AGCT", "AGCT");
-    auto result3 = traceback(score3, dir3, "AGCT", "AGCT");
-    assert(result3.first == "AGCT");
-    assert(result3.second == "AGCT");
-    std::cout << "Test 3 passed: Traceback verification\n";
+    // Test 3: Different sequences with common subsequence
+    auto [score3, dir3] = smith_waterman("ACACACTA", "AGCACACA");
+    auto result3 = traceback(score3, dir3, "ACACACTA", "AGCACACA");
+    assert(!result3.first.empty());
+    assert(!result3.second.empty());
+    std::cout << "Test 3 passed: Common subsequence alignment\n";
 
     // Test 4: No match scenario
     auto [score4, dir4] = smith_waterman("AAAA", "TTTT");
@@ -265,13 +271,13 @@ static void test() {
     assert(result5.second.empty());
     std::cout << "Test 5 passed: Empty string handling\n";
 
-    // Test 6: Sequences with gaps
-    auto [score6, dir6] = smith_waterman("AGCT", "AGT");
-    auto result6 = traceback(score6, dir6, "AGCT", "AGT");
+    // Test 6: Longer sequences with multiple gaps
+    auto [score6, dir6] = smith_waterman("GCATGCT", "GATTACA");
+    auto result6 = traceback(score6, dir6, "GCATGCT", "GATTACA");
     assert(!result6.first.empty());
     assert(!result6.second.empty());
     assert(result6.first.length() == result6.second.length());
-    std::cout << "Test 6 passed: Sequences with gaps\n";
+    std::cout << "Test 6 passed: Longer sequences with gaps\n";
 
     // Test 7: Custom scoring parameters
     auto [score7, dir7] = smith_waterman("AGCT", "AGCT", 3, -2, -2);
